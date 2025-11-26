@@ -75,7 +75,9 @@ image_save_paths={
     "ablation_directinversion_interval_49+p2p":"ablation_directinversion_interval_49+p2p",
     "ablation_null-text-inversion_single_branch+p2p":"ablation_null-text-inversion_single_branch+p2p",
     "ablation_directinversion_add-source+p2p":"ablation_directinversion_add-source+p2p",
-    "ablation_directinversion_add-target+p2p":"ablation_directinversion_add-target+p2p"
+    "ablation_directinversion_add-target+p2p":"ablation_directinversion_add-target+p2p",
+
+    "p2p_consistency":"p2p_consistency"
     }
 
 
