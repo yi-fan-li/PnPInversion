@@ -1,0 +1,7 @@
+diffusers==0.30.3
+transformers==4.49
+ftfy
+opencv-python
+ipywidgets
+matplotlib
+accelerate
