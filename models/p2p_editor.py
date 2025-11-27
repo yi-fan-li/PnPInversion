@@ -11,6 +11,7 @@ import numpy as np
 
 from diffusers.schedulers.scheduling_lcm import LCMScheduler
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+from diffusers.models.attention_processor import AttnProcessor
 import torch
 
 class P2PEditor:
@@ -24,15 +25,19 @@ class P2PEditor:
             unet = UNet2DConditionModel.from_pretrained(
                 "SimianLuo/LCM_Dreamshaper_v7",
                 subfolder="unet",
-                torch_dtype=torch.float16,
+                torch_dtype=torch.float32,
             )
             self.ldm_stable = StableDiffusionPipeline.from_pretrained(
                 "SimianLuo/LCM_Dreamshaper_v7",
                 unet=unet,
                 scheduler=self.scheduler,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.float32,
             ).to(device)
-            self.ldm_stable.scheduler.set_timesteps(5)
+            
+            self.ldm_stable.unet.set_attn_processor(AttnProcessor())
+
+            self.num_ddim_steps=8
+            self.ldm_stable.scheduler.set_timesteps(self.num_ddim_steps)
         
         else:
             self.scheduler = DDIMSchedulerDev(beta_start=0.00085,
@@ -163,7 +168,7 @@ class P2PEditor:
         image_path,
         prompt_src,
         prompt_tar,
-        guidance_scale=7.5,
+        guidance_scale=1.5,
         cross_replace_steps=0.4,
         self_replace_steps=0.6,
         blend_word=None,

@@ -147,7 +147,7 @@ def txt_draw(text,
     buf.shape = (w, h, 4)
     buf = np.roll(buf, 3, axis=2)
     image = Image.frombytes("RGBA", (w, h), buf.tostring())
-    image = image.resize(target_size,Image.ANTIALIAS)
+    image = image.resize(target_size,Image.Resampling.LANCZOS)
     image = np.asarray(image)[:,:,:3]
     
     plt.close('all')

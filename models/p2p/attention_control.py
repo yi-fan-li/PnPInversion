@@ -8,78 +8,114 @@ from models.p2p import seq_aligner
 MAX_NUM_WORDS = 77
 LATENT_SIZE = (64, 64)
 LOW_RESOURCE = False 
+# --- NEW: Custom Processor for Diffusers v0.30+ / LCM ---
+class PTPLCMAttnProcessor:
+    def __init__(self, place_in_unet, is_cross, controller):
+        self.place_in_unet = place_in_unet
+        self.is_cross = is_cross
+        self.controller = controller
+
+    def __call__(self, attn, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None, scale=1.0):
+        batch_size, sequence_length, _ = hidden_states.shape
+        
+        # 1. Query
+        query = attn.to_q(hidden_states)
+
+        # 2. Key & Value
+        # Handle Cross vs Self Attention logic explicitly
+        if encoder_hidden_states is None:
+            encoder_hidden_states = hidden_states
+        
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
+        # 3. Reshape heads
+        query = attn.head_to_batch_dim(query)
+        key = attn.head_to_batch_dim(key)
+        value = attn.head_to_batch_dim(value)
+
+        # 4. Attention Scores
+        attention_probs = attn.get_attention_scores(query, key, attention_mask)
+
+        # 5. --- P2P HOOK ---
+        # Call the controller. This pushes data to AttentionStore.
+        attention_probs = self.controller(attention_probs, self.is_cross, self.place_in_unet)
+        # -------------------
+
+        # 6. Output
+        hidden_states = torch.bmm(attention_probs, value)
+        hidden_states = attn.batch_to_head_dim(hidden_states)
+
+        # Linear Proj
+        hidden_states = attn.to_out[0](hidden_states)
+        # Dropout
+        hidden_states = attn.to_out[1](hidden_states)
+
+        return hidden_states
 
 def register_attention_control(model, controller):
-    def ca_forward(self, place_in_unet):
-        to_out = self.to_out
-        if type(to_out) is torch.nn.modules.container.ModuleList:
-            to_out = self.to_out[0]
-        else:
-            to_out = self.to_out
-
-        def forward(x, context=None, mask=None, **kwargs):
-            if isinstance(context, dict):  # NOTE: compatible with ELITE (0.11.1)
-                context = context['CONTEXT_TENSOR']
-            batch_size, sequence_length, dim = x.shape
-            h = self.heads
-            q = self.to_q(x)
-            is_cross = context is not None
-            context = context if is_cross else x
-            k = self.to_k(context)
-            v = self.to_v(context)
-            q = self.reshape_heads_to_batch_dim(q)
-            k = self.reshape_heads_to_batch_dim(k)
-            v = self.reshape_heads_to_batch_dim(v)
-
-            sim = torch.einsum("b i d, b j d -> b i j", q, k) * self.scale
-
-            if mask is not None:
-                mask = mask.reshape(batch_size, -1)
-                max_neg_value = -torch.finfo(sim.dtype).max
-                mask = mask[:, None, :].repeat(h, 1, 1)
-                sim.masked_fill_(~mask, max_neg_value)
-
-            # attention, what we cannot get enough of
-            attn = sim.softmax(dim=-1)
-            attn = controller(attn, is_cross, place_in_unet)
-            out = torch.einsum("b i j, b j d -> b i d", attn, v)
-            out = self.reshape_batch_dim_to_heads(out)
-            return to_out(out)
-
-        return forward
-
+    """
+    Updated registration for Diffusers v0.30+ and LCM.
+    Counts BOTH Self and Cross attention layers to prevent early stepping.
+    """
+    
+    # Simple Dummy if none provided
     class DummyController:
-
         def __call__(self, *args):
             return args[0]
-
         def __init__(self):
             self.num_att_layers = 0
 
     if controller is None:
         controller = DummyController()
 
-    def register_recr(net_, count, place_in_unet):
-        if net_.__class__.__name__ == 'CrossAttention':
-            net_.forward = ca_forward(net_, place_in_unet)
-            return count + 1
-        elif hasattr(net_, 'children'):
-            for net__ in net_.children():
-                count = register_recr(net__, count, place_in_unet)
-        return count
+    if hasattr(controller, 'reset'):
+        controller.reset()
 
-    cross_att_count = 0
-    sub_nets = model.unet.named_children()
-    for net in sub_nets:
-        if "down" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "down")
-        elif "up" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "up")
-        elif "mid" in net[0]:
-            cross_att_count += register_recr(net[1], 0, "mid")
+    # We rename this variable to total_att_count because it counts ALL layers
+    total_att_count = 0
 
-    controller.num_att_layers = cross_att_count
+    for name, module in model.unet.named_modules():
+        if module.__class__.__name__ == "Attention":
+            
+            # 1. Identify Place
+            if "down_blocks" in name:
+                place = "down"
+            elif "up_blocks" in name:
+                place = "up"
+            elif "mid_block" in name:
+                place = "mid"
+            else:
+                continue 
 
+            # 2. Identify Type and Valid Layer
+            # We process both attn1 (Self) and attn2 (Cross)
+            is_cross = False
+            valid_layer = False
+
+            if "attn2" in name:
+                is_cross = True
+                valid_layer = True
+            elif "attn1" in name:
+                is_cross = False
+                valid_layer = True
+            
+            if valid_layer:
+                # --- CRITICAL FIX ---
+                # We increment the count for BOTH Self and Cross attention
+                # because the controller.__call__ is invoked for both.
+                total_att_count += 1
+                
+                module.set_processor(
+                    PTPLCMAttnProcessor(
+                        place_in_unet=place,
+                        is_cross=is_cross,
+                        controller=controller
+                    )
+                )
+
+    # Set the correct total limit
+    controller.num_att_layers = total_att_count
 
 def get_equalizer(text, word_select, values, tokenizer=None):
     if type(word_select) is int or type(word_select) is str:
