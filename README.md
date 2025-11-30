@@ -1,7 +1,8 @@
 # PnPInversion
 
 
-This repository contains the implementation of the ICLR2024 paper "PnP Inversion: Boosting Diffusion-based Editing with 3 Lines of Code" 
+
+This repository is a fork of the implementation of the ICLR2024 paper "PnP Inversion: Boosting Diffusion-based Editing with 3 Lines of Code" 
 
 Keywords: Diffusion Model, Image Inversion, Image Editing
 
@@ -35,6 +36,7 @@ Keywords: Diffusion Model, Image Inversion, Image Editing
 - [Qualitative Results](#qualitative-results)
 - [Cite Us](#cite-us)
 - [Acknowledgement](#acknowledgement)
+- [Changes in the Fork](#Changes)
 
 
 ## 🛠️ Method Overview
@@ -371,3 +373,26 @@ More results can be found in the main paper.
 
 Our code is modified on the basis of [prompt-to-prompt](https://github.com/google/prompt-to-prompt), [StyleDiffusion](https://github.com/sen-mao/StyleDiffusion), [MasaCtrl](https://github.com/TencentARC/MasaCtrl), [pix2pix-zero](https://github.com/pix2pixzero/pix2pix-zero) , [Plug-and-Play](https://github.com/MichalGeyer/plug-and-play), [Edit Friendly DDPM Noise Space](https://github.com/inbarhub/DDPM_inversion), [Blended Latent Diffusion](https://github.com/omriav/blended-latent-diffusion), [Proximal Guidance](https://github.com/phymhan/prompt-to-prompt), [InstructPix2Pix](https://github.com/timothybrooks/instruct-pix2pix), thanks to all the contributors!
 
+
+## Changes in the Fork
+<span id="Changes"></span>
+
+A new environment file has been made for p2p to be compatible with diffuser 30.3 (for consistency models). The code has been modified in turn so that ddim and direct inversion still works in the new environment
+
+- consistency_requirement.txt: for models in `run_editing_p2p.py`, `run_editing_blended_latent_diffusion.py`, `run_editing_stylediffusion.py`, and `run_editing_edit_friendly_p2p.py`
+
+shell command remains as above:
+
+
+```shell
+conda create -n p2p python=3.9 -y
+conda activate p2p
+conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
+pip install -r environment/p2p_requirements.txt
+```
+
+new command added to run consistency model with p2p and direct inversion (12 steps, results are poor):
+
+```
+python run_editing_p2p.py --output_path output --edit_category_list 0 1 2 3 4 5 6 7 8 9 --edit_method_list p2p_consistency
+```
