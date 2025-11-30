@@ -6,6 +6,8 @@ from PIL import Image
 import torch
 import random
 
+import time
+
 from models.p2p_editor import P2PEditor
 
 def mask_decode(encoded_mask,image_shape=[512,512]):
@@ -96,7 +98,7 @@ if __name__ == "__main__":
     edit_category_list=args.edit_category_list
     edit_method_list=args.edit_method_list
     
-    p2p_editor=P2PEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'),num_ddim_steps=50)
+    p2p_editor=P2PEditor(edit_method_list, torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'),num_ddim_steps=12)
     
     with open(f"{data_path}/mapping_file.json", "r") as f:
         editing_instruction = json.load(f)
@@ -116,6 +118,7 @@ if __name__ == "__main__":
         for edit_method in edit_method_list:
             present_image_save_path=image_path.replace(data_path, os.path.join(output_path,image_save_paths[edit_method]))
             if ((not os.path.exists(present_image_save_path)) or rerun_exist_images):
+                start_time = time.time()
                 print(f"editing image [{image_path}] with [{edit_method}]")
                 setup_seed()
                 torch.cuda.empty_cache()
@@ -143,6 +146,8 @@ if __name__ == "__main__":
                 edited_image.save(present_image_save_path)
                 
                 print(f"finish")
+                end_time = time.time()  
+                print(f"time cost: {end_time - start_time} seconds")
                 
             else:
                 print(f"skip image [{image_path}] with [{edit_method}]")

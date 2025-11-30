@@ -9,6 +9,7 @@ from utils.utils import load_512, latent2image, txt_draw
 from PIL import Image
 import numpy as np
 
+from diffusers.schedulers.scheduling_tcd import TCDScheduler
 from diffusers.schedulers.scheduling_lcm import LCMScheduler
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.models.attention_processor import AttnProcessor
@@ -21,22 +22,23 @@ class P2PEditor:
         self.num_ddim_steps=num_ddim_steps
         # init model
         if method_list == ["p2p_consistency"]:
-            self.scheduler = LCMScheduler()
-            unet = UNet2DConditionModel.from_pretrained(
-                "SimianLuo/LCM_Dreamshaper_v7",
-                subfolder="unet",
-                torch_dtype=torch.float32,
-            )
+            self.scheduler = TCDScheduler()
+            # self.scheduler = LCMScheduler()
+            # unet = UNet2DConditionModel.from_pretrained(
+            #     "SimianLuo/LCM_Dreamshaper_v7",
+            #     subfolder="unet",
+            #     torch_dtype=torch.float32,
+            # )
             self.ldm_stable = StableDiffusionPipeline.from_pretrained(
-                "SimianLuo/LCM_Dreamshaper_v7",
-                unet=unet,
+                "CompVis/stable-diffusion-v1-4",
+                # unet=unet,
                 scheduler=self.scheduler,
                 torch_dtype=torch.float32,
             ).to(device)
-            
+
             self.ldm_stable.unet.set_attn_processor(AttnProcessor())
 
-            self.num_ddim_steps=8
+            self.num_ddim_steps=12
             self.ldm_stable.scheduler.set_timesteps(self.num_ddim_steps)
         
         else:
@@ -163,12 +165,74 @@ class P2PEditor:
         else:
             raise NotImplementedError(f"No edit method named {edit_method}")
         
+    # def edit_image_p2p_consistency(
+    #     self,
+    #     image_path,
+    #     prompt_src,
+    #     prompt_tar,
+    #     guidance_scale=1.5,
+    #     cross_replace_steps=0.4,
+    #     self_replace_steps=0.6,
+    #     blend_word=None,
+    #     eq_params=None,
+    #     is_replace_controller=False,
+    # ):
+    #     image_gt = load_512(image_path)
+    #     prompts = [prompt_src, prompt_tar]
+
+    #     null_inversion = NullInversion(model=self.ldm_stable,
+    #                                 num_ddim_steps=self.num_ddim_steps)
+    #     _, _, x_stars, uncond_embeddings = null_inversion.invert(
+    #         image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale,num_inner_steps=0)
+    #     x_t = x_stars[-1]
+
+    #     controller = AttentionStore()
+    #     reconstruct_latent, x_t = p2p_guidance_forward(model=self.ldm_stable, 
+    #                                    prompt=[prompt_src], 
+    #                                    controller=controller, 
+    #                                    latent=x_t, 
+    #                                    num_inference_steps=self.num_ddim_steps, 
+    #                                    guidance_scale=guidance_scale, 
+    #                                    generator=None, 
+    #                                    uncond_embeddings=uncond_embeddings)
+        
+
+    #     reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+    #     image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+        
+    #     ########## edit ##########
+    #     cross_replace_steps = {
+    #         'default_': cross_replace_steps,
+    #     }
+
+    #     controller = make_controller(pipeline=self.ldm_stable,
+    #                                 prompts=prompts,
+    #                                 is_replace_controller=is_replace_controller,
+    #                                 cross_replace_steps=cross_replace_steps,
+    #                                 self_replace_steps=self_replace_steps,
+    #                                 blend_words=blend_word,
+    #                                 equilizer_params=eq_params,
+    #                                 num_ddim_steps=self.num_ddim_steps,
+    #                                 device=self.device)
+    #     latents, _ = p2p_guidance_forward(model=self.ldm_stable, 
+    #                                    prompt=prompts, 
+    #                                    controller=controller, 
+    #                                    latent=x_t, 
+    #                                    num_inference_steps=self.num_ddim_steps, 
+    #                                    guidance_scale=guidance_scale, 
+    #                                    generator=None, 
+    #                                    uncond_embeddings=uncond_embeddings)
+
+    #     images = latent2image(model=self.ldm_stable.vae, latents=latents)
+
+    #     return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+    
     def edit_image_p2p_consistency(
         self,
         image_path,
         prompt_src,
         prompt_tar,
-        guidance_scale=1.5,
+        guidance_scale=7.5,
         cross_replace_steps=0.4,
         self_replace_steps=0.6,
         blend_word=None,
@@ -178,26 +242,26 @@ class P2PEditor:
         image_gt = load_512(image_path)
         prompts = [prompt_src, prompt_tar]
 
-        null_inversion = NullInversion(model=self.ldm_stable,
+        null_inversion = DirectInversion(model=self.ldm_stable,
                                     num_ddim_steps=self.num_ddim_steps)
-        _, _, x_stars, uncond_embeddings = null_inversion.invert(
-            image_gt=image_gt, prompt=prompt_src,guidance_scale=guidance_scale,num_inner_steps=0)
+        _, _, x_stars, noise_loss_list = null_inversion.invert(
+            image_gt=image_gt, prompt=prompts,guidance_scale=guidance_scale)
         x_t = x_stars[-1]
 
         controller = AttentionStore()
-        reconstruct_latent, x_t = p2p_guidance_forward(model=self.ldm_stable, 
-                                       prompt=[prompt_src], 
+        
+        reconstruct_latent, x_t = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
+                                       prompt=prompts, 
                                        controller=controller, 
-                                       latent=x_t, 
+                                       noise_loss_list=noise_loss_list, 
+                                       latent=x_t,
                                        num_inference_steps=self.num_ddim_steps, 
                                        guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
+                                       generator=None)
+    
         
-
         reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
-        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
-        
+
         ########## edit ##########
         cross_replace_steps = {
             'default_': cross_replace_steps,
@@ -212,18 +276,22 @@ class P2PEditor:
                                     equilizer_params=eq_params,
                                     num_ddim_steps=self.num_ddim_steps,
                                     device=self.device)
-        latents, _ = p2p_guidance_forward(model=self.ldm_stable, 
+        
+        latents, _ = direct_inversion_p2p_guidance_forward(model=self.ldm_stable, 
                                        prompt=prompts, 
                                        controller=controller, 
-                                       latent=x_t, 
+                                       noise_loss_list=noise_loss_list, 
+                                       latent=x_t,
                                        num_inference_steps=self.num_ddim_steps, 
                                        guidance_scale=guidance_scale, 
-                                       generator=None, 
-                                       uncond_embeddings=uncond_embeddings)
+                                       generator=None)
 
         images = latent2image(model=self.ldm_stable.vae, latents=latents)
 
-        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image,images[-1]),axis=1))
+        
+        image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+        return Image.fromarray(np.concatenate((image_instruct, image_gt, reconstruct_image, images[-1]), axis=1))
 
 
     def edit_image_ddim(
